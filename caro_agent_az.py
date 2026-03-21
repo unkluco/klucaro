@@ -554,6 +554,20 @@ class CaroAgent:
             ch = results[max(0, i-smooth_window+1):i+1]
             wr.append(sum(1 for r in ch if r=="win") / len(ch))
 
+        # ── Text log (luôn hiện trong Kaggle logs) ──
+        last_loss = losses[-1] if losses else 0
+        last_wr   = wr[-1] if wr else 0
+        last_pi   = pi_maxs[-1] if pi_maxs else 0
+        wins  = sum(1 for r in results if r == "win")
+        loses = sum(1 for r in results if r == "lose")
+        invs  = sum(1 for r in results if r == "invalid")
+        print(f"[Dashboard] Ván #{self.game_count} | "
+              f"Win={wins} Lose={loses} Inv={invs} | "
+              f"WinRate={last_wr:.1%} | "
+              f"Loss={last_loss:.4f} | "
+              f"π_max={last_pi:.4f} | "
+              f"Buffer={len(self.buffer):,}")
+
         fig = plt.figure(figsize=(16, 10))
         fig.suptitle(f"Ván #{self.game_count} | Win: {self._win_rate():.1%} | "
                      f"Buffer: {len(self.buffer):,}", fontsize=14, fontweight="bold")
