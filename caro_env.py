@@ -341,6 +341,15 @@ class CaroEnv:
 
     def _show_play_n_result(self, stats, best_game, n):
         """Hiển thị kết quả n ván."""
+        # ── Text log (luôn hiện trong Kaggle logs) ──
+        a1, a2 = stats["agent1"], stats["agent2"]
+        print(f"[play_n] {n} ván:")
+        print(f"  Agent1: W={a1['win']} L={a1['lose']} D={a1['draw']} I={a1['invalid']}"
+              f"  ({a1['win']/max(n,1):.0%} win)")
+        print(f"  Agent2: W={a2['win']} L={a2['lose']} D={a2['draw']} I={a2['invalid']}"
+              f"  ({a2['win']/max(n,1):.0%} win)")
+
+        # ── Chart ──
         fig = plt.figure(figsize=(18, 8))
         fig.suptitle(f"Kết quả {n} ván đấu", fontsize=14, fontweight="bold")
         gs  = gridspec.GridSpec(1, 3, figure=fig, wspace=0.35)
