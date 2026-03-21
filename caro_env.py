@@ -193,12 +193,11 @@ class CaroEnv:
     # CHẾ ĐỘ 1: CHƠI 1 VÁN
     # ----------------------------------------------------------------
 
-    def play_one(self, agent1, agent2, title="", prefill_steps=0):
+    def play_one(self, agent1, agent2, title="", prefill_steps=0, collect=False):
         """
         Chơi 1 ván và hiển thị bàn cờ cuối dưới dạng hình ảnh.
-
-        Ví dụ:
-            env.play_one(deep_agent, greedy_agent)
+        collect=False: đánh giá, không lưu vào buffer.
+        collect=True:  lưu data vào buffer (hiếm khi cần).
         """
         if prefill_steps > 0:
             opening_board, opening_log, start_turn = self._generate_random_opening(prefill_steps)
@@ -212,9 +211,13 @@ class CaroEnv:
         else:
             winner, results = self._play_game(agent1, agent2)
 
-        # Gọi train nếu agent có hỗ trợ
-        agent1.train_on_game(results["agent1"])
-        agent2.train_on_game(results["agent2"])
+        if collect:
+            agent1.train_on_game(results["agent1"])
+            agent2.train_on_game(results["agent2"])
+        else:
+            # Xoá _steps tích lũy từ get_action để không lẫn vào lần train sau
+            if hasattr(agent1, "_steps"): agent1._steps = []
+            if hasattr(agent2, "_steps"): agent2._steps = []
 
         label = {1: "Agent 1", -1: "Agent 2", 0: "Hoà"}
         print(f"Kết quả: {label.get(winner, '?')} thắng")
@@ -226,7 +229,7 @@ class CaroEnv:
             title=title or f"Ván đấu — {label.get(winner,'?')} thắng",
         )
         
-    def play_live(self, agent1, agent2, title="", delay=0.15, prefill_steps=0):
+    def play_live(self, agent1, agent2, title="", delay=0.15, prefill_steps=0, collect=False):
         """
         Chơi 1 ván và cập nhật bàn cờ liên tục từng bước.
         delay: thời gian nghỉ giữa 2 nước (giây).
@@ -275,8 +278,12 @@ class CaroEnv:
                     r1 = "win" if self.winner == 1 else "lose"
                     r2 = "win" if self.winner == -1 else "lose"
 
-                agent1.train_on_game(r1)
-                agent2.train_on_game(r2)
+                if collect:
+                    agent1.train_on_game(r1)
+                    agent2.train_on_game(r2)
+                else:
+                    if hasattr(agent1, "_steps"): agent1._steps = []
+                    if hasattr(agent2, "_steps"): agent2._steps = []
                 break
 
             turn *= -1
@@ -298,23 +305,24 @@ class CaroEnv:
     # CHẾ ĐỘ 2: CHƠI N VÁN
     # ----------------------------------------------------------------
 
-    def play_n(self, agent1, agent2, n=100):
+    def play_n(self, agent1, agent2, n=100, collect=False):
         """
-        Chơi n ván, sau đó hiển thị:
-          - Thống kê thắng/thua/hoà
-          - Bàn cờ của ván thắng đẹp nhất mỗi phe
-
-        Ví dụ:
-            env.play_n(deep_agent, greedy_agent, n=200)
+        Chơi n ván, hiển thị thống kê + bàn cờ ván thắng đẹp nhất.
+        collect=False: đánh giá, không lưu vào buffer.
         """
         stats     = {"agent1": {"win":0,"lose":0,"draw":0,"invalid":0},
                      "agent2": {"win":0,"lose":0,"draw":0,"invalid":0}}
-        best_game = {1: None, -1: None}   # lưu board + move_log ván thắng dài nhất
+        best_game = {1: None, -1: None}
 
         for i in range(n):
             winner, results = self._play_game(agent1, agent2)
-            agent1.train_on_game(results["agent1"])
-            agent2.train_on_game(results["agent2"])
+
+            if collect:
+                agent1.train_on_game(results["agent1"])
+                agent2.train_on_game(results["agent2"])
+            else:
+                if hasattr(agent1, "_steps"): agent1._steps = []
+                if hasattr(agent2, "_steps"): agent2._steps = []
 
             r1, r2 = results["agent1"], results["agent2"]
             stats["agent1"][r1 if r1 in stats["agent1"] else "lose"] += 1
@@ -505,14 +513,17 @@ class CaroEnv:
 
             # Train từ buffer mỗi train_every ván
             if i % train_every == 0:
-                loss = 0.0
+                loss1, loss2 = 0.0, 0.0
                 if hasattr(agent1, "train_buffer") and callable(agent1.train_buffer):
-                    loss = agent1.train_buffer(batch_size, epochs)
+                    loss1 = agent1.train_buffer(batch_size, epochs)
+                if hasattr(agent2, "train_buffer") and callable(agent2.train_buffer):
+                    loss2 = agent2.train_buffer(batch_size, epochs)
                 elapsed = time.time() - t_start
-                buf_size = len(agent1.buffer) if hasattr(agent1, "buffer") else 0
-                print(f"  Ván {i}/{n} | loss={loss:.4f} | "
-                      f"buffer={buf_size:,} | "
-                      f"Agent1: W={stats['agent1']['win']} "
+                buf1 = len(agent1.buffer) if hasattr(agent1, "buffer") else 0
+                buf2 = len(agent2.buffer) if hasattr(agent2, "buffer") else 0
+                print(f"  Ván {i}/{n} | loss1={loss1:.4f} loss2={loss2:.4f} | "
+                      f"buf={buf1:,}+{buf2:,} | "
+                      f"A1: W={stats['agent1']['win']} "
                       f"L={stats['agent1']['lose']} | {elapsed:.0f}s")
 
             # Vẽ biểu đồ
