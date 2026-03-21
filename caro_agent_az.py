@@ -250,16 +250,16 @@ class ReplayBuffer:
     def sample_batches(self, batch_size, epochs=1):
         """
         Shuffle toàn bộ buffer, chia thành batches.
-        Trả về generator of (states_batch, pis_batch, zs_batch).
+        Batch cuối bị bỏ nếu nhỏ hơn batch_size (drop_last)
+        → đảm bảo mọi batch cùng size, chia đều cho multi-GPU.
         """
         n       = len(self.states)
         indices = np.arange(n)
 
         for _ in range(epochs):
             np.random.shuffle(indices)
-            for start in range(0, n, batch_size):
-                end  = min(start + batch_size, n)
-                idxs = indices[start:end]
+            for start in range(0, n - batch_size + 1, batch_size):
+                idxs = indices[start:start + batch_size]
 
                 s_batch = np.array([self.states[i] for i in idxs], dtype=np.float32)
                 p_batch = np.array([self.pis[i]    for i in idxs], dtype=np.float32)
@@ -390,20 +390,19 @@ class CaroAgent:
     def train_buffer(self, batch_size=TRAIN_BATCH, epochs=TRAIN_EPOCHS):
         """
         Shuffle toàn bộ replay buffer → chia batch → train.
-
-        Gọi hàm này mỗi N ván (ví dụ mỗi 20 ván).
-        Data từ nhiều ván trộn lẫn → gradient ổn định.
-
-        Returns:
-            avg_loss: float
+        Batch_size tự động giảm nếu buffer quá nhỏ.
         """
-        if len(self.buffer) == 0:
+        buf_len = len(self.buffer)
+        if buf_len == 0:
             return 0.0
+
+        # Nếu buffer nhỏ hơn batch_size → dùng buffer size (tránh skip hết)
+        actual_bs = min(batch_size, buf_len)
 
         total_loss = 0.0
         n_batches  = 0
 
-        for s_batch, p_batch, z_batch in self.buffer.sample_batches(batch_size, epochs):
+        for s_batch, p_batch, z_batch in self.buffer.sample_batches(actual_bs, epochs):
             s_t = tf.constant(s_batch)
             p_t = tf.constant(p_batch)
             z_t = tf.constant(z_batch)
