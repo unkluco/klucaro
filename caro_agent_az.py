@@ -291,13 +291,16 @@ class CaroAgent:
 
     def __init__(self, board_size=BOARD_SIZE, base_filters=128,
                  n_res=10, n_sim=N_SIM, n_parallel=N_PARALLEL,
-                 buffer_size=BUFFER_SIZE):
+                 buffer_size=BUFFER_SIZE, strategy=None):
         self.board_size   = board_size
         self.base_filters = base_filters
         self.n_res        = n_res
 
-        # Strategy
-        self.strategy = tf.distribute.MirroredStrategy()
+        # Strategy: dùng chung nếu truyền vào, tự tạo nếu không
+        if strategy is not None:
+            self.strategy = strategy
+        else:
+            self.strategy = tf.distribute.MirroredStrategy()
         n_gpu = self.strategy.num_replicas_in_sync
         print(f"Strategy: {n_gpu} replica(s)")
 
