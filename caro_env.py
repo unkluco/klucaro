@@ -2,7 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.gridspec as gridspec
-from IPython import display
+from IPython import display, get_ipython
+from IPython.display import Image
+from io import BytesIO
 import os
 from datetime import datetime
 
@@ -264,8 +266,7 @@ class CaroEnv:
                 self.move_log,
                 title=f"{title} | Turn: {label.get(turn, '?')} | Move: ({row}, {col})"
             )
-            display.display(fig)
-            display.clear_output(wait=True)
+            self._show_figure(fig, clear_before=True, close_after=False)
             time.sleep(delay)
 
             if done:
@@ -297,7 +298,7 @@ class CaroEnv:
             self.move_log,
             title=f"Kết quả: {winner_label.get(self.winner, '?')}"
         )
-        display.display(fig)
+        self._show_figure(fig, close_after=True)
         print(f"Kết quả: {winner_label.get(self.winner, '?')} thắng")
         print(f"Agent1 -> {r1} | Agent2 -> {r2}")
 
@@ -390,7 +391,7 @@ class CaroEnv:
             ax2.set_title("Agent 2 chưa thắng ván nào")
             ax2.axis("off")
 
-        plt.show()
+        self._show_figure(fig)
 
     # ----------------------------------------------------------------
     # CHẾ ĐỘ 3: TRAIN
@@ -570,6 +571,193 @@ class CaroEnv:
                 pass
 
     # ----------------------------------------------------------------
+    # CHẾ ĐỘ 4: TOURNAMENT
+    # ----------------------------------------------------------------
+
+    def tournament(self, agents, n_per_pair=20):
+        """
+        Round-robin tournament: mỗi cặp đấu n_per_pair ván.
+
+        Mỗi cặp: nửa đầu A đi trước, nửa sau B đi trước (công bằng).
+        Không lưu vào buffer (eval mode).
+
+        Args:
+            agents     : dict {"tên": agent_instance, ...}
+                         Tất cả agents phải cùng board_size với env.
+            n_per_pair : số ván mỗi cặp (nên chẵn)
+
+        Ví dụ:
+            env.tournament({
+                "AZ_500":   agent_500,
+                "AZ_1000":  agent_1000,
+                "Greedy":   greedy,
+            }, n_per_pair=20)
+        """
+        names = list(agents.keys())
+        n     = len(names)
+
+        if n < 2:
+            print("Cần ít nhất 2 agents!")
+            return
+
+        # Đảm bảo chẵn
+        if n_per_pair % 2 != 0:
+            n_per_pair += 1
+
+        half = n_per_pair // 2
+
+        # Ma trận thắng: wins[i][j] = số ván agent i thắng agent j
+        wins = np.zeros((n, n), dtype=int)
+
+        total_matches = n * (n - 1) // 2
+        match_count   = 0
+
+        print(f"Tournament: {n} agents, {n_per_pair} ván/cặp, "
+              f"{total_matches} cặp, {total_matches * n_per_pair} ván tổng")
+        print("-" * 60)
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                a_name, b_name = names[i], names[j]
+                a_agent, b_agent = agents[a_name], agents[b_name]
+                match_count += 1
+
+                a_wins, b_wins, draws = 0, 0, 0
+
+                for game_k in range(n_per_pair):
+                    # Nửa đầu: A đi trước, nửa sau: B đi trước
+                    if game_k < half:
+                        first, second = a_agent, b_agent
+                    else:
+                        first, second = b_agent, a_agent
+
+                    winner, results = self._play_game(first, second)
+
+                    # Xoá _steps (eval mode)
+                    if hasattr(first, "_steps"):  first._steps = []
+                    if hasattr(second, "_steps"): second._steps = []
+
+                    # Đếm thắng cho agent A và B
+                    if game_k < half:
+                        # A là agent1, B là agent2
+                        if results["agent1"] == "win":
+                            a_wins += 1
+                        elif results["agent2"] == "win":
+                            b_wins += 1
+                        else:
+                            draws += 1
+                    else:
+                        # B là agent1, A là agent2
+                        if results["agent1"] == "win":
+                            b_wins += 1
+                        elif results["agent2"] == "win":
+                            a_wins += 1
+                        else:
+                            draws += 1
+
+                wins[i][j] = a_wins
+                wins[j][i] = b_wins
+
+                print(f"  [{match_count}/{total_matches}] "
+                      f"{a_name} vs {b_name}: "
+                      f"{a_wins}W-{b_wins}L-{draws}D")
+
+        # Tổng thắng mỗi agent
+        total_wins = wins.sum(axis=1)
+        total_losses = wins.sum(axis=0)
+        ranking = sorted(range(n), key=lambda i: total_wins[i], reverse=True)
+
+        # ── Text log ──
+        print("\n" + "=" * 60)
+        print("BẢNG XẾP HẠNG")
+        print("=" * 60)
+        for rank, idx in enumerate(ranking, 1):
+            w = total_wins[idx]
+            l = total_losses[idx]
+            print(f"  #{rank}  {names[idx]:15s}  "
+                  f"W={w:3d}  L={l:3d}  "
+                  f"WR={w/max(w+l,1):.0%}")
+
+        # ── Vẽ ──
+        self._draw_tournament(names, wins, total_wins, ranking)
+
+    def _draw_tournament(self, names, wins, total_wins, ranking):
+        """Vẽ ma trận + bảng xếp hạng."""
+        n = len(names)
+
+        fig = plt.figure(figsize=(14, 7))
+        fig.suptitle("Tournament Results", fontsize=14, fontweight="bold")
+        gs = gridspec.GridSpec(1, 2, figure=fig, width_ratios=[3, 2], wspace=0.3)
+
+        # ── Ma trận thắng/thua ──
+        ax1 = fig.add_subplot(gs[0, 0])
+
+        # Tạo matrix hiển thị: tỉ lệ thắng (0~1)
+        display_matrix = np.zeros((n, n))
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    display_matrix[i][j] = 0.5   # đường chéo = trung tính
+                else:
+                    total = wins[i][j] + wins[j][i]
+                    if total > 0:
+                        display_matrix[i][j] = wins[i][j] / total
+                    else:
+                        display_matrix[i][j] = 0.5
+
+        # Colormap: đỏ (0) → trắng (0.5) → xanh lá (1)
+        from matplotlib.colors import LinearSegmentedColormap
+        cmap = LinearSegmentedColormap.from_list(
+            "rg", ["#E24B4A", "#FFFFFF", "#2E8B57"]
+        )
+
+        im = ax1.imshow(display_matrix, cmap=cmap, vmin=0, vmax=1, aspect="equal")
+
+        # Ghi số thắng vào ô
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    text = "-"
+                    color = "gray"
+                else:
+                    text = str(wins[i][j])
+                    color = "white" if abs(display_matrix[i][j] - 0.5) > 0.3 else "black"
+                ax1.text(j, i, text, ha="center", va="center",
+                         fontsize=11, fontweight="bold", color=color)
+
+        ax1.set_xticks(range(n))
+        ax1.set_yticks(range(n))
+        ax1.set_xticklabels(names, fontsize=9, rotation=45, ha="right")
+        ax1.set_yticklabels(names, fontsize=9)
+        ax1.set_xlabel("Đối thủ")
+        ax1.set_ylabel("Agent")
+        ax1.set_title("Số ván thắng (hàng thắng cột)")
+
+        # ── Bảng xếp hạng ──
+        ax2 = fig.add_subplot(gs[0, 1])
+
+        ranked_names = [names[i] for i in ranking]
+        ranked_wins  = [total_wins[i] for i in ranking]
+        colors = ["#2E8B57" if i == 0 else "#5DCAA5" if i == 1
+                  else "#9FE1CB" for i in range(n)]
+
+        bars = ax2.barh(range(n), ranked_wins, color=colors, edgecolor="white")
+        ax2.set_yticks(range(n))
+        ax2.set_yticklabels(ranked_names, fontsize=10)
+        ax2.invert_yaxis()
+        ax2.set_xlabel("Tổng số ván thắng")
+        ax2.set_title("Bảng xếp hạng")
+        ax2.grid(alpha=0.3, axis="x")
+
+        # Ghi số lên bar
+        for bar, val in zip(bars, ranked_wins):
+            ax2.text(bar.get_width() + 0.3, bar.get_y() + bar.get_height()/2,
+                     str(val), va="center", fontsize=10, fontweight="bold")
+
+        plt.savefig("tournament.png", dpi=100, bbox_inches="tight")
+        self._show_figure(fig)
+
+    # ----------------------------------------------------------------
     # VẼ BÀN CỜ
     # ----------------------------------------------------------------
 
@@ -578,7 +766,28 @@ class CaroEnv:
         fig, ax = plt.subplots(figsize=(8, 8))
         self._draw_board_on_ax(ax, board, move_log, title)
         plt.tight_layout()
+        self._show_figure(fig)
+
+    def _show_figure(self, fig, clear_before=False, close_after=True):
+        """Hiển thị figure ổn định trong notebook và script."""
+        try:
+            if get_ipython() is not None:
+                if clear_before:
+                    display.clear_output(wait=True)
+                # Một số kernel chỉ in repr của Figure; ép render PNG để luôn thấy ảnh.
+                buf = BytesIO()
+                fig.savefig(buf, format="png", bbox_inches="tight")
+                buf.seek(0)
+                display.display(Image(data=buf.getvalue()))
+                if close_after:
+                    plt.close(fig)
+                return
+        except Exception:
+            pass
+
         plt.show()
+        if close_after:
+            plt.close(fig)
 
     def _draw_board_on_ax(self, ax, board, move_log, title=""):
         """Vẽ bàn cờ lên ax cho trước."""

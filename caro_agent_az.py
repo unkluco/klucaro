@@ -10,7 +10,9 @@ Tính năng:
 
 import tensorflow as tf
 import numpy as np
-from IPython import display
+from IPython import display, get_ipython
+from IPython.display import Image
+from io import BytesIO
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -620,7 +622,27 @@ class CaroAgent:
                      color="mediumpurple", lw=2)
         ax5.set_title("Steps/game"); ax5.grid(alpha=.3)
         plt.savefig("dashboard.png", dpi=100, bbox_inches="tight")
+        self._show_figure(fig)
+
+    def _show_figure(self, fig, clear_before=False, close_after=True):
+        """Hiển thị figure ổn định trong notebook và script."""
+        try:
+            if get_ipython() is not None:
+                if clear_before:
+                    display.clear_output(wait=True)
+                buf = BytesIO()
+                fig.savefig(buf, format="png", bbox_inches="tight")
+                buf.seek(0)
+                display.display(Image(data=buf.getvalue()))
+                if close_after:
+                    plt.close(fig)
+                return
+        except Exception:
+            pass
+
         plt.show()
+        if close_after:
+            plt.close(fig)
 
     def plot_last_game_detail(self):
         if not self.game_history: return
